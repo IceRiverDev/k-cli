@@ -1,4 +1,4 @@
-module github.com/IceRiverDev/simple-cli
+module github.com/IceRiverDev/k-cli
 
 go 1.24.13
 

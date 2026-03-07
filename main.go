@@ -1,6 +1,6 @@
 package main
 
-import "github.com/IceRiverDev/simple-cli/cmd"
+import "github.com/IceRiverDev/k-cli/cmd"
 
 func main() {
 	cmd.Execute()

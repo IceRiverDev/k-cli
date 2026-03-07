@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	k8sclient "github.com/IceRiverDev/simple-cli/internal/k8s"
+	k8sclient "github.com/IceRiverDev/k-cli/internal/k8s"
 )
 
 var (
