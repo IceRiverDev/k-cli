@@ -3,6 +3,7 @@ module github.com/IceRiverDev/k-cli
 go 1.24.13
 
 require (
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.0
 	go.uber.org/zap v1.26.0
@@ -15,7 +16,6 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
