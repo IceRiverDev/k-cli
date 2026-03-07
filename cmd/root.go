@@ -16,6 +16,7 @@ var (
 	kubeconfig string
 	namespace  string
 	verbose    bool
+	enableLog  bool
 
 	// Logger is the global structured logger.
 	Logger *zap.Logger
@@ -24,15 +25,18 @@ var (
 	K8sClient *k8sclient.Client
 )
 
-// rootCmd is the base command for phoenix.
+// rootCmd is the base command for k-cli.
 var rootCmd = &cobra.Command{
-	Use:   "phoenix",
+	Use:   "k-cli",
 	Short: "A kubectl-like CLI tool for managing Kubernetes Pods",
-	Long: `phoenix is a production-grade CLI tool built with Cobra that lets you
-manage Kubernetes Pods — create, delete, describe, exec into, and sync files.`,
+	Long: `k-cli is a production-grade CLI tool built with Cobra that lets you
+manage Kubernetes Pods — create, delete, describe, exec into, and sync files.
+
+By default, log output is disabled (silent mode). Use --log to enable logging.
+Combine --log with --verbose to enable debug-level logging.`,
 	SilenceUsage: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		initLogger(verbose)
+		initLogger(enableLog, verbose)
 
 		client, err := k8sclient.NewClient(kubeconfig)
 		if err != nil {
@@ -64,6 +68,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "path to the kubeconfig file (default: ~/.kube/config, or $KUBECONFIG)")
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "default", "default Kubernetes namespace")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose logging")
+	rootCmd.PersistentFlags().BoolVar(&enableLog, "log", false, "enable log output (disabled by default)")
 
 	_ = viper.BindPFlag("kubeconfig", rootCmd.PersistentFlags().Lookup("kubeconfig"))
 	_ = viper.BindPFlag("namespace", rootCmd.PersistentFlags().Lookup("namespace"))
@@ -72,7 +77,7 @@ func init() {
 
 // initConfig reads in config file and ENV variables.
 func initConfig() {
-	viper.SetEnvPrefix("PHOENIX")
+	viper.SetEnvPrefix("KCLI")
 	viper.AutomaticEnv()
 
 	if kc := viper.GetString("kubeconfig"); kc == "" {
@@ -83,9 +88,13 @@ func initConfig() {
 }
 
 // initLogger configures the global zap logger.
-func initLogger(debug bool) {
+func initLogger(enableLog bool, verbose bool) {
+	if !enableLog {
+		Logger = zap.NewNop()
+		return
+	}
 	level := zapcore.InfoLevel
-	if debug {
+	if verbose {
 		level = zapcore.DebugLevel
 	}
 

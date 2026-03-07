@@ -24,13 +24,13 @@ var createCmd = &cobra.Command{
 	Short: "Create a Pod based on an image",
 	Long:  `Create a new Kubernetes Pod from a specified container image with optional port, environment variables, and labels.`,
 	Example: `  # Create a simple pod
-  phoenix create my-pod --image nginx:latest -n default
+  k-cli create my-pod --image nginx:latest -n default
 
   # Create with port and environment variables
-  phoenix create my-pod --image nginx:latest --port 80 --env ENV=production --env VERSION=1.0
+  k-cli create my-pod --image nginx:latest --port 80 --env ENV=production --env VERSION=1.0
 
   # Create with labels
-  phoenix create my-pod --image nginx:latest --labels app=my-app --labels tier=frontend`,
+  k-cli create my-pod --image nginx:latest --labels app=my-app --labels tier=frontend`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		podName := args[0]

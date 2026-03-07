@@ -18,10 +18,10 @@ var deleteCmd = &cobra.Command{
 	Short: "Delete a Pod",
 	Long:  `Delete a Kubernetes Pod by name, with an option for a forced (immediate) deletion.`,
 	Example: `  # Delete a pod gracefully
-  phoenix delete my-pod -n default
+  k-cli delete my-pod -n default
 
   # Force-delete a pod immediately
-  phoenix delete my-pod -n default --force`,
+  k-cli delete my-pod -n default --force`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		podName := args[0]
