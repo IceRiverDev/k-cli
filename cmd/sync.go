@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +24,7 @@ var (
 	syncContainer string
 	syncDelete    bool
 	syncExcludes  []string
+	syncWatch     bool
 )
 
 var syncCmd = &cobra.Command{
@@ -35,7 +39,10 @@ using kubectl cp-style tar streaming over the exec API.`,
   k-cli sync my-pod ./config.yaml /app/config.yaml -n default
 
   # Sync and delete remote files not present locally
-  k-cli sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules`,
+  k-cli sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules
+
+  # Watch for local changes and auto-sync
+  k-cli sync my-pod ./src /app/src --watch`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		podName := args[0]
@@ -50,6 +57,10 @@ using kubectl cp-style tar streaming over the exec API.`,
 			zap.String("remote", remotePath),
 		)
 
+		if syncWatch {
+			return watchAndSync(cmd.Context(), podName, namespace, syncContainer, localPath, remotePath, syncExcludes)
+		}
+
 		return syncToPod(cmd.Context(), podName, namespace, syncContainer, localPath, remotePath, syncDelete, syncExcludes)
 	},
 }
@@ -58,6 +69,7 @@ func init() {
 	syncCmd.Flags().StringVarP(&syncContainer, "container", "c", "", "container name (defaults to the first container)")
 	syncCmd.Flags().BoolVar(&syncDelete, "delete", false, "delete files in the remote directory that do not exist locally")
 	syncCmd.Flags().StringArrayVar(&syncExcludes, "exclude", nil, "exclude files or directories matching this pattern (can be repeated)")
+	syncCmd.Flags().BoolVar(&syncWatch, "watch", false, "watch local path for changes and auto-sync to pod")
 	rootCmd.AddCommand(syncCmd)
 }
 
@@ -260,4 +272,77 @@ func runRemoteCommand(ctx context.Context, podName, ns, container string, comman
 		return err
 	}
 	return nil
+}
+
+// watchAndSync watches localPath for filesystem changes and syncs to the pod on each change.
+func watchAndSync(ctx context.Context, podName, ns, container, localPath, remotePath string, excludes []string) error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create watcher: %w", err)
+	}
+	defer watcher.Close()
+
+	// Recursively add all directories under localPath.
+	if err := addDirsToWatcher(watcher, localPath); err != nil {
+		return fmt.Errorf("failed to watch %q: %w", localPath, err)
+	}
+
+	fmt.Printf("👀 Watching %s for changes... (press Ctrl+C to stop)\n", localPath)
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("\nStopping watcher.")
+			return nil
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) {
+				rel, relErr := filepath.Rel(localPath, event.Name)
+				if relErr != nil {
+					continue
+				}
+				if shouldExclude(rel, excludes) {
+					continue
+				}
+				ts := time.Now().Format("15:04:05")
+				fmt.Printf("[%s] Changed: %s → syncing...\n", ts, event.Name)
+
+				// For newly created directories, add them to the watcher.
+				if event.Has(fsnotify.Create) {
+					if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
+						_ = watcher.Add(event.Name)
+					}
+				}
+
+				if syncErr := syncToPod(ctx, podName, ns, container, localPath, remotePath, false, excludes); syncErr != nil {
+					fmt.Printf("[%s] ❌ Sync error: %v\n", ts, syncErr)
+				} else {
+					fmt.Printf("[%s] ✅ Synced to %s:%s\n", ts, podName, remotePath)
+				}
+			}
+		case watchErr, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			fmt.Printf("watcher error: %v\n", watchErr)
+		}
+	}
+}
+
+// addDirsToWatcher recursively adds all directories under root to the watcher.
+func addDirsToWatcher(watcher *fsnotify.Watcher, root string) error {
+	return filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if fi.IsDir() {
+			return watcher.Add(path)
+		}
+		return nil
+	})
 }

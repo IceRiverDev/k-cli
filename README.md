@@ -9,10 +9,12 @@
 | Command | Description |
 |---------|-------------|
 | `k-cli exec` | Open an interactive TTY shell in a running Pod |
-| `k-cli create` | Create a new Pod from a container image |
-| `k-cli delete` | Delete a Pod (with optional force) |
 | `k-cli describe` | Show detailed Pod specification and status |
-| `k-cli sync` | Sync local files/directories to a Pod path |
+| `k-cli sync` | Sync local files/directories to a Pod (supports `--watch` hot-reload) |
+| `k-cli pull` | Pull files/directories from a Pod to local |
+| `k-cli diagnose` | Diagnose Pod health and give actionable suggestions |
+
+> **Note:** For creating and deleting Pods, use the native `kubectl create` and `kubectl delete` commands.
 
 ---
 
@@ -46,10 +48,7 @@ k-cli --help
 ## Quick Start
 
 ```bash
-# Create a pod
-k-cli create my-pod --image nginx:latest --port 80
-
-# Describe it
+# Describe a pod
 k-cli describe my-pod
 
 # Exec into it
@@ -58,8 +57,14 @@ k-cli exec my-pod -c my-pod
 # Sync a local config file
 k-cli sync my-pod ./nginx.conf /etc/nginx/nginx.conf
 
-# Delete it
-k-cli delete my-pod
+# Pull a file from the pod
+k-cli pull my-pod /app/config.yaml ./config.yaml
+
+# Watch for local changes and auto-sync
+k-cli sync my-pod ./src /app/src --watch
+
+# Diagnose pod health
+k-cli diagnose my-pod
 ```
 
 ---
@@ -90,60 +95,6 @@ k-cli exec my-pod -n default -c main
 
 ---
 
-### `k-cli create <pod-name>` — Create a Pod
-
-Creates a Kubernetes Pod from a container image.
-
-```bash
-k-cli create <pod-name> --image <image> [flags]
-
-Flags:
-      --image string         Container image (required)
-      --port int             Port to expose
-      --env stringArray      Environment variables, KEY=VALUE (repeatable)
-      --labels stringArray   Pod labels, KEY=VALUE (repeatable)
-  -n, --namespace string     Namespace (default "default")
-```
-
-**Examples:**
-
-```bash
-# Create a basic pod
-k-cli create my-pod --image nginx:latest
-
-# Create with port and env vars
-k-cli create my-pod --image nginx:latest --port 80 --env ENV=production --env VERSION=1.0
-
-# Create with labels
-k-cli create my-pod --image nginx:latest --labels app=my-app --labels tier=frontend
-```
-
----
-
-### `k-cli delete <pod-name>` — Delete a Pod
-
-Deletes a Pod. Supports immediate (forced) deletion.
-
-```bash
-k-cli delete <pod-name> [flags]
-
-Flags:
-      --force              Grace period = 0 (immediate)
-  -n, --namespace string   Namespace (default "default")
-```
-
-**Examples:**
-
-```bash
-# Graceful delete
-k-cli delete my-pod -n default
-
-# Force delete
-k-cli delete my-pod -n default --force
-```
-
----
-
 ### `k-cli describe <pod-name>` — Show Pod Details
 
 Displays full Pod specification including containers, labels, annotations, and recent events.
@@ -170,7 +121,7 @@ k-cli describe my-pod -n default -o yaml
 
 ### `k-cli sync <pod-name> <local-path> <remote-path>` — Sync Files to Pod
 
-Copies a local file or directory into a Pod using the `exec + tar` streaming mechanism (same as `kubectl cp`).
+Copies a local file or directory into a Pod using the `exec + tar` streaming mechanism (same as `kubectl cp`). Supports `--watch` for continuous hot-reload.
 
 ```bash
 k-cli sync <pod-name> <local-path> <remote-path> [flags]
@@ -180,6 +131,7 @@ Flags:
       --delete                Remove remote files not present locally
       --exclude stringArray   Exclude pattern(s) (repeatable)
   -n, --namespace string      Namespace (default "default")
+      --watch                 Watch local path for changes and auto-sync to pod
 ```
 
 **Examples:**
@@ -193,6 +145,83 @@ k-cli sync my-pod ./config.yaml /app/config.yaml
 
 # Sync with deletion of stale remote files
 k-cli sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules
+
+# Watch for changes and auto-sync (hot-reload)
+k-cli sync my-pod ./src /app/src --watch
+```
+
+---
+
+### `k-cli pull <pod-name> <remote-path> <local-path>` — Pull Files from Pod
+
+Pulls a file or directory from inside a Kubernetes Pod to the local filesystem using the `exec + tar` streaming mechanism.
+
+```bash
+k-cli pull <pod-name> <remote-path> <local-path> [flags]
+
+Flags:
+  -c, --container string   Container name (defaults to first container)
+  -n, --namespace string   Namespace (default "default")
+```
+
+**Examples:**
+
+```bash
+# Pull a directory from pod to local
+k-cli pull my-pod /app/logs ./local-logs -n default
+
+# Pull a single file
+k-cli pull my-pod /app/config.yaml ./config.yaml -n default -c main
+```
+
+---
+
+### `k-cli diagnose <pod-name>` — Diagnose Pod Health
+
+Inspects a Pod's status, restart history, resource limits, container readiness, and recent events to produce a health report with actionable suggestions.
+
+```bash
+k-cli diagnose <pod-name> [flags]
+
+Flags:
+  -n, --namespace string   Namespace (default "default")
+```
+
+**Checks performed:**
+- Pod phase (Running / Pending / Failed / Unknown)
+- Restart count and last termination reason
+- OOMKilled detection with memory limit info
+- Resource limits/requests configuration
+- Container readiness status
+- Recent warning events
+
+**Examples:**
+
+```bash
+# Diagnose a pod
+k-cli diagnose my-pod -n default
+
+# Diagnose in another namespace
+k-cli diagnose my-pod -n production
+```
+
+**Sample output:**
+```
+🔍 Diagnosing pod: my-pod (namespace: default)
+─────────────────────────────────────────────
+✅ Status:        Running
+⚠️  Restarts:     5 (last reason: OOMKilled)
+❌ Memory:        OOMKilled detected — current limit: 128Mi
+   💡 Suggestion: increase memory limit to at least 256Mi
+⚠️  Resources:    No CPU limit set for container "my-pod"
+   💡 Suggestion: set resources.limits.cpu to avoid noisy neighbor
+✅ Containers:    1/1 Ready
+─────────────────────────────────────────────
+📋 Recent Events (last 5):
+   [Warning] OOMKilling: Memory limit reached
+   [Normal]  Pulled: Successfully pulled image
+─────────────────────────────────────────────
+🏁 Diagnosis complete: 1 critical, 2 warnings
 ```
 
 ---
@@ -232,18 +261,19 @@ k-cli describe my-pod
 ## Project Structure
 
 ```
-simple-cli/
+k-cli/
 ├── main.go
 ├── cmd/
 │   ├── root.go       # Root command and global flags
 │   ├── exec.go       # k-cli exec
-│   ├── create.go     # k-cli create
-│   ├── delete.go     # k-cli delete
 │   ├── describe.go   # k-cli describe
-│   └── sync.go       # k-cli sync
+│   ├── sync.go       # k-cli sync (--watch hot-reload)
+│   ├── pull.go       # k-cli pull
+│   └── diagnose.go   # k-cli diagnose
 ├── internal/
 │   └── k8s/
 │       └── client.go # Kubernetes client wrapper
 ├── go.mod
 └── README.md
 ```
+
