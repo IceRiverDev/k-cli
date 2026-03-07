@@ -29,13 +29,13 @@ var syncCmd = &cobra.Command{
 	Long: `Synchronize a local file or directory to a specified path inside a Kubernetes Pod
 using kubectl cp-style tar streaming over the exec API.`,
 	Example: `  # Sync a directory
-  phoenix sync my-pod ./src /app/src -n default -c main
+  k-cli sync my-pod ./src /app/src -n default -c main
 
   # Sync a single file
-  phoenix sync my-pod ./config.yaml /app/config.yaml -n default
+  k-cli sync my-pod ./config.yaml /app/config.yaml -n default
 
   # Sync and delete remote files not present locally
-  phoenix sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules`,
+  k-cli sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		podName := args[0]

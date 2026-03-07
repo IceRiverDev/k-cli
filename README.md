@@ -1,6 +1,6 @@
-# phoenix
+# k-cli
 
-`phoenix` is a production-grade, kubectl-like CLI tool for managing Kubernetes Pods. Built with Go and [Cobra](https://github.com/spf13/cobra), it provides a clean interface for the most common Pod lifecycle operations.
+`k-cli` is a production-grade, kubectl-like CLI tool for managing Kubernetes Pods. Built with Go and [Cobra](https://github.com/spf13/cobra), it provides a clean interface for the most common Pod lifecycle operations.
 
 ---
 
@@ -8,11 +8,11 @@
 
 | Command | Description |
 |---------|-------------|
-| `phoenix exec` | Open an interactive TTY shell in a running Pod |
-| `phoenix create` | Create a new Pod from a container image |
-| `phoenix delete` | Delete a Pod (with optional force) |
-| `phoenix describe` | Show detailed Pod specification and status |
-| `phoenix sync` | Sync local files/directories to a Pod path |
+| `k-cli exec` | Open an interactive TTY shell in a running Pod |
+| `k-cli create` | Create a new Pod from a container image |
+| `k-cli delete` | Delete a Pod (with optional force) |
+| `k-cli describe` | Show detailed Pod specification and status |
+| `k-cli sync` | Sync local files/directories to a Pod path |
 
 ---
 
@@ -31,14 +31,14 @@ git clone https://github.com/IceRiverDev/simple-cli.git
 cd simple-cli
 
 VERSION=$(git describe --tags --always --dirty)
-go build -ldflags "-X main.version=${VERSION}" -o phoenix .
+go build -ldflags "-X main.version=${VERSION}" -o k-cli .
 ```
 
 Move the binary to somewhere on your `$PATH`:
 
 ```bash
-mv phoenix /usr/local/bin/
-phoenix --help
+mv k-cli /usr/local/bin/
+k-cli --help
 ```
 
 ---
@@ -47,31 +47,31 @@ phoenix --help
 
 ```bash
 # Create a pod
-phoenix create my-pod --image nginx:latest --port 80
+k-cli create my-pod --image nginx:latest --port 80
 
 # Describe it
-phoenix describe my-pod
+k-cli describe my-pod
 
 # Exec into it
-phoenix exec my-pod -c my-pod
+k-cli exec my-pod -c my-pod
 
 # Sync a local config file
-phoenix sync my-pod ./nginx.conf /etc/nginx/nginx.conf
+k-cli sync my-pod ./nginx.conf /etc/nginx/nginx.conf
 
 # Delete it
-phoenix delete my-pod
+k-cli delete my-pod
 ```
 
 ---
 
 ## Commands
 
-### `phoenix exec <pod-name>` — Enter a Pod Shell
+### `k-cli exec <pod-name>` — Enter a Pod Shell
 
 Opens an interactive TTY session (`/bin/bash` with `/bin/sh` fallback).
 
 ```bash
-phoenix exec <pod-name> [flags]
+k-cli exec <pod-name> [flags]
 
 Flags:
   -c, --container string   Container name (defaults to first container)
@@ -82,20 +82,20 @@ Flags:
 
 ```bash
 # Enter the default container
-phoenix exec my-pod -n default
+k-cli exec my-pod -n default
 
 # Enter a specific container
-phoenix exec my-pod -n default -c main
+k-cli exec my-pod -n default -c main
 ```
 
 ---
 
-### `phoenix create <pod-name>` — Create a Pod
+### `k-cli create <pod-name>` — Create a Pod
 
 Creates a Kubernetes Pod from a container image.
 
 ```bash
-phoenix create <pod-name> --image <image> [flags]
+k-cli create <pod-name> --image <image> [flags]
 
 Flags:
       --image string         Container image (required)
@@ -109,23 +109,23 @@ Flags:
 
 ```bash
 # Create a basic pod
-phoenix create my-pod --image nginx:latest
+k-cli create my-pod --image nginx:latest
 
 # Create with port and env vars
-phoenix create my-pod --image nginx:latest --port 80 --env ENV=production --env VERSION=1.0
+k-cli create my-pod --image nginx:latest --port 80 --env ENV=production --env VERSION=1.0
 
 # Create with labels
-phoenix create my-pod --image nginx:latest --labels app=my-app --labels tier=frontend
+k-cli create my-pod --image nginx:latest --labels app=my-app --labels tier=frontend
 ```
 
 ---
 
-### `phoenix delete <pod-name>` — Delete a Pod
+### `k-cli delete <pod-name>` — Delete a Pod
 
 Deletes a Pod. Supports immediate (forced) deletion.
 
 ```bash
-phoenix delete <pod-name> [flags]
+k-cli delete <pod-name> [flags]
 
 Flags:
       --force              Grace period = 0 (immediate)
@@ -136,20 +136,20 @@ Flags:
 
 ```bash
 # Graceful delete
-phoenix delete my-pod -n default
+k-cli delete my-pod -n default
 
 # Force delete
-phoenix delete my-pod -n default --force
+k-cli delete my-pod -n default --force
 ```
 
 ---
 
-### `phoenix describe <pod-name>` — Show Pod Details
+### `k-cli describe <pod-name>` — Show Pod Details
 
 Displays full Pod specification including containers, labels, annotations, and recent events.
 
 ```bash
-phoenix describe <pod-name> [flags]
+k-cli describe <pod-name> [flags]
 
 Flags:
   -o, --output string      Output format: yaml
@@ -160,20 +160,20 @@ Flags:
 
 ```bash
 # Human-readable output
-phoenix describe my-pod -n default
+k-cli describe my-pod -n default
 
 # Raw YAML output
-phoenix describe my-pod -n default -o yaml
+k-cli describe my-pod -n default -o yaml
 ```
 
 ---
 
-### `phoenix sync <pod-name> <local-path> <remote-path>` — Sync Files to Pod
+### `k-cli sync <pod-name> <local-path> <remote-path>` — Sync Files to Pod
 
 Copies a local file or directory into a Pod using the `exec + tar` streaming mechanism (same as `kubectl cp`).
 
 ```bash
-phoenix sync <pod-name> <local-path> <remote-path> [flags]
+k-cli sync <pod-name> <local-path> <remote-path> [flags]
 
 Flags:
   -c, --container string      Container name (defaults to first container)
@@ -186,13 +186,13 @@ Flags:
 
 ```bash
 # Sync a directory
-phoenix sync my-pod ./src /app/src -n default -c main
+k-cli sync my-pod ./src /app/src -n default -c main
 
 # Sync a single file
-phoenix sync my-pod ./config.yaml /app/config.yaml
+k-cli sync my-pod ./config.yaml /app/config.yaml
 
 # Sync with deletion of stale remote files
-phoenix sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules
+k-cli sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules
 ```
 
 ---
@@ -205,13 +205,14 @@ These flags are available on every command:
 |------|-------------|
 | `--kubeconfig string` | Path to kubeconfig file (default: `~/.kube/config` or `$KUBECONFIG`) |
 | `-n, --namespace string` | Default namespace (default: `default`) |
-| `-v, --verbose` | Enable verbose/debug logging |
+| `--log` | Enable log output (disabled by default) |
+| `-v, --verbose` | Enable verbose/debug logging (only effective when `--log` is also set) |
 
 ---
 
 ## Configuration
 
-`phoenix` uses the standard Kubernetes kubeconfig discovery:
+`k-cli` uses the standard Kubernetes kubeconfig discovery:
 
 1. `--kubeconfig` flag
 2. `$KUBECONFIG` environment variable
@@ -219,11 +220,11 @@ These flags are available on every command:
 
 ```bash
 # Use a specific kubeconfig
-phoenix describe my-pod --kubeconfig /path/to/kubeconfig
+k-cli describe my-pod --kubeconfig /path/to/kubeconfig
 
 # Use the KUBECONFIG environment variable
 export KUBECONFIG=/path/to/kubeconfig
-phoenix describe my-pod
+k-cli describe my-pod
 ```
 
 ---
@@ -235,11 +236,11 @@ simple-cli/
 ├── main.go
 ├── cmd/
 │   ├── root.go       # Root command and global flags
-│   ├── exec.go       # phoenix exec
-│   ├── create.go     # phoenix create
-│   ├── delete.go     # phoenix delete
-│   ├── describe.go   # phoenix describe
-│   └── sync.go       # phoenix sync
+│   ├── exec.go       # k-cli exec
+│   ├── create.go     # k-cli create
+│   ├── delete.go     # k-cli delete
+│   ├── describe.go   # k-cli describe
+│   └── sync.go       # k-cli sync
 ├── internal/
 │   └── k8s/
 │       └── client.go # Kubernetes client wrapper

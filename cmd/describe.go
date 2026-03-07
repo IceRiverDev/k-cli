@@ -22,10 +22,10 @@ var describeCmd = &cobra.Command{
 	Short: "Show detailed information about a Pod",
 	Long:  `Display detailed specification and status of a Kubernetes Pod, including containers, labels, annotations, and recent events.`,
 	Example: `  # Describe a pod in human-readable format
-  phoenix describe my-pod -n default
+  k-cli describe my-pod -n default
 
   # Output raw YAML
-  phoenix describe my-pod -n default -o yaml`,
+  k-cli describe my-pod -n default -o yaml`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		podName := args[0]

@@ -21,10 +21,10 @@ var execCmd = &cobra.Command{
 	Short: "Enter an interactive shell inside a Pod",
 	Long:  `Open an interactive TTY shell session in a running Kubernetes Pod container.`,
 	Example: `  # Enter the default container in a pod
-  phoenix exec my-pod -n default
+  k-cli exec my-pod -n default
 
   # Enter a specific container
-  phoenix exec my-pod -n default -c main`,
+  k-cli exec my-pod -n default -c main`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		podName := args[0]
