@@ -1,6 +1,6 @@
 # k-cli
 
-`k-cli` is a production-grade, kubectl-like CLI tool for managing Kubernetes Pods. Built with Go and [Cobra](https://github.com/spf13/cobra), it provides a clean interface for the most common Pod lifecycle operations.
+`k-cli` is a production-grade, kubectl-like CLI tool for managing Kubernetes Pods. Built with Go and [Cobra](https://github.com/spf13/cobra), it provides a clean interface for common Pod operations.
 
 ---
 
@@ -8,11 +8,10 @@
 
 | Command | Description |
 |---------|-------------|
-| `k-cli exec` | Open an interactive TTY shell in a running Pod |
-| `k-cli sync` | Sync local files/directories to a Pod (supports `--watch` hot-reload, recursive monitoring) |
-| `k-cli pull` | Pull files/directories from a Pod to local |
+| `k-cli sync` | Sync local files/directories to a Pod (`--watch` enables recursive auto-sync with rsync-like stale-file cleanup) |
+| `k-cli pull` | Pull files/directories from a Pod to local via tar streaming |
 | `k-cli diagnose` | Diagnose Pod health and give actionable suggestions |
-| `k-cli secret` | View a Kubernetes Secret with automatically decoded base64 values |
+| `k-cli secret` | View a Kubernetes Secret with automatically decoded values |
 
 > **Note:** For creating and deleting Pods, use the native `kubectl create` and `kubectl delete` commands.
 
@@ -26,14 +25,12 @@
 go install github.com/IceRiverDev/k-cli@latest
 ```
 
-### Build from source (with version injection)
+### Build from source
 
 ```bash
 git clone https://github.com/IceRiverDev/k-cli.git
 cd k-cli
-
-VERSION=$(git describe --tags --always --dirty)
-go build -ldflags "-X main.version=${VERSION}" -o k-cli .
+go build -o k-cli .
 ```
 
 Move the binary to somewhere on your `$PATH`:
@@ -48,16 +45,16 @@ k-cli --help
 ## Quick Start
 
 ```bash
-# Exec into a pod
-k-cli exec my-pod -c my-pod
+# Sync a local directory to a remote directory
+k-cli sync my-pod ./src /app/src
 
-# Sync a local config file
-k-cli sync my-pod ./nginx.conf /etc/nginx/nginx.conf
+# Sync a single file into a remote directory
+k-cli sync my-pod ./nginx.conf /etc/nginx
 
-# Pull a file from the pod
-k-cli pull my-pod /app/config.yaml ./config.yaml
+# Pull a remote path into a local directory (keeps relative structure)
+k-cli pull my-pod /app/config.yaml ./downloads
 
-# Watch for local changes and auto-sync (recursive, debounced)
+# Watch for local changes and auto-sync (recursive + debounced)
 k-cli sync my-pod ./src /app/src --watch
 
 # Diagnose pod health
@@ -71,43 +68,25 @@ k-cli secret my-secret -n default
 
 ## Commands
 
-### `k-cli exec <pod-name>` — Enter a Pod Shell
-
-Opens an interactive TTY session (`/bin/bash` with `/bin/sh` fallback).
-
-```bash
-k-cli exec <pod-name> [flags]
-
-Flags:
-  -c, --container string   Container name (defaults to first container)
-  -n, --namespace string   Namespace (default "default")
-```
-
-**Examples:**
-
-```bash
-# Enter the default container
-k-cli exec my-pod -n default
-
-# Enter a specific container
-k-cli exec my-pod -n default -c main
-```
-
----
-
 ### `k-cli sync <pod-name> <local-path> <remote-path>` — Sync Files to Pod
 
-Copies a local file or directory into a Pod using the `exec + tar` streaming mechanism (same as `kubectl cp`). Supports `--watch` for continuous hot-reload with recursive directory monitoring, debouncing, and compatibility with editor atomic-write patterns (vim, GoLand, etc.).
+Copies a local file or directory into a Pod using tar streaming over `exec` (similar to `kubectl cp`).
+
+- One-shot mode syncs content to `remote-path`.
+- `--delete` is applied in one-shot mode for directory syncs.
+- `--watch` enables recursive file watching with debouncing; each trigger runs a full rsync-like sync (including stale remote file cleanup).
 
 ```bash
 k-cli sync <pod-name> <local-path> <remote-path> [flags]
 
 Flags:
   -c, --container string      Container name (defaults to first container)
-      --delete                Remove remote files not present locally
-      --exclude stringArray   Exclude pattern(s) (repeatable)
-  -n, --namespace string      Namespace (default "default")
+      --delete                Remove remote files not present locally (one-shot mode)
+      --exclude stringArray   Exclude by exact name/path component (repeatable; not glob syntax)
       --watch                 Watch local path for changes and auto-sync to pod
+
+Global Flags:
+  -n, --namespace string      Namespace (default "default")
 ```
 
 **Examples:**
@@ -116,13 +95,13 @@ Flags:
 # Sync a directory
 k-cli sync my-pod ./src /app/src -n default -c main
 
-# Sync a single file
-k-cli sync my-pod ./config.yaml /app/config.yaml
+# Sync a single file into a remote directory
+k-cli sync my-pod ./config.yaml /app/config -n default
 
-# Sync with deletion of stale remote files
+# One-shot sync with stale-file cleanup
 k-cli sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules
 
-# Watch for changes and auto-sync (hot-reload, recursive, editor-compatible)
+# Watch for changes and auto-sync (also cleans stale remote files)
 k-cli sync my-pod ./src /app/src --watch
 ```
 
@@ -130,13 +109,17 @@ k-cli sync my-pod ./src /app/src --watch
 
 ### `k-cli pull <pod-name> <remote-path> <local-path>` — Pull Files from Pod
 
-Pulls a file or directory from inside a Kubernetes Pod to the local filesystem using the `exec + tar` streaming mechanism.
+Pulls a file or directory from inside a Kubernetes Pod to the local filesystem using tar streaming over `exec`.
+
+> `local-path` is treated as a destination directory. Pulled entries keep their tar names under that directory.
 
 ```bash
 k-cli pull <pod-name> <remote-path> <local-path> [flags]
 
 Flags:
   -c, --container string   Container name (defaults to first container)
+
+Global Flags:
   -n, --namespace string   Namespace (default "default")
 ```
 
@@ -146,8 +129,8 @@ Flags:
 # Pull a directory from pod to local
 k-cli pull my-pod /app/logs ./local-logs -n default
 
-# Pull a single file
-k-cli pull my-pod /app/config.yaml ./config.yaml -n default -c main
+# Pull a single file into a local directory
+k-cli pull my-pod /app/config.yaml ./downloads -n default -c main
 ```
 
 ---
@@ -160,9 +143,11 @@ Fetches a Kubernetes Secret and automatically decodes all base64-encoded values 
 k-cli secret <secret-name> [flags]
 
 Flags:
-      --key string         Show only this specific key
+      --key string      Show only this specific key
+      --show-encoded    Also show the original base64 encoded value
+
+Global Flags:
   -n, --namespace string   Namespace (default "default")
-      --show-encoded       Also show the original base64 encoded value
 ```
 
 **Examples:**
@@ -187,7 +172,7 @@ Inspects a Pod's status, restart history, resource limits, container readiness, 
 ```bash
 k-cli diagnose <pod-name> [flags]
 
-Flags:
+Global Flags:
   -n, --namespace string   Namespace (default "default")
 ```
 
@@ -197,7 +182,7 @@ Flags:
 - OOMKilled detection with memory limit info
 - Resource limits/requests configuration
 - Container readiness status
-- Recent warning events
+- Recent events (up to 5 shown)
 
 **Examples:**
 
@@ -239,13 +224,13 @@ These flags are available on every command:
 | `--kubeconfig string` | Path to kubeconfig file (default: `~/.kube/config` or `$KUBECONFIG`) |
 | `-n, --namespace string` | Default namespace (default: `default`) |
 | `--log` | Enable log output (disabled by default) |
-| `-v, --verbose` | Enable verbose/debug logging (only effective when `--log` is also set) |
+| `-v, --verbose` | Enable verbose/debug logging (effective when `--log` is enabled) |
 
 ---
 
 ## Configuration
 
-`k-cli` uses the standard Kubernetes kubeconfig discovery:
+`k-cli` discovers kubeconfig in this order:
 
 1. `--kubeconfig` flag
 2. `$KUBECONFIG` environment variable
@@ -253,11 +238,11 @@ These flags are available on every command:
 
 ```bash
 # Use a specific kubeconfig
-k-cli exec my-pod --kubeconfig /path/to/kubeconfig
+k-cli sync my-pod ./src /app/src --kubeconfig /path/to/kubeconfig
 
 # Use the KUBECONFIG environment variable
 export KUBECONFIG=/path/to/kubeconfig
-k-cli exec my-pod
+k-cli sync my-pod ./src /app/src
 ```
 
 ---
@@ -269,8 +254,7 @@ k-cli/
 ├── main.go
 ├── cmd/
 │   ├── root.go       # Root command and global flags
-│   ├── exec.go       # k-cli exec
-│   ├── sync.go       # k-cli sync (--watch hot-reload, recursive)
+│   ├── sync.go       # k-cli sync (--watch recursive + debounced rsync)
 │   ├── pull.go       # k-cli pull
 │   ├── diagnose.go   # k-cli diagnose
 │   └── secret.go     # k-cli secret
@@ -280,4 +264,3 @@ k-cli/
 ├── go.mod
 └── README.md
 ```
-
