@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -183,6 +184,156 @@ func addFileToTar(tw *tar.Writer, localPath, archiveName string) error {
 	return err
 }
 
+// shellQuote wraps s in single quotes, escaping any embedded single quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// listRemoteFiles returns the relative (forward-slash) paths of all regular files
+// found under remotePath inside the pod. Errors are propagated so callers can skip
+// the deletion step gracefully when find(1) is unavailable.
+func listRemoteFiles(ctx context.Context, podName, ns, container, remotePath string) ([]string, error) {
+	findCmd := fmt.Sprintf("find %s -mindepth 1 -type f 2>/dev/null", shellQuote(remotePath))
+
+	req := K8sClient.Clientset.CoreV1().RESTClient().
+		Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(ns).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: container,
+			Command:   []string{"sh", "-c", findCmd},
+			Stdin:     false,
+			Stdout:    true,
+			Stderr:    false,
+			TTY:       false,
+		}, scheme.ParameterCodec)
+
+	executor, err := remotecommand.NewSPDYExecutor(K8sClient.RestConfig, "POST", req.URL())
+	if err != nil {
+		return nil, err
+	}
+
+	var stdout bytes.Buffer
+	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: &stdout}); err != nil {
+		return nil, err
+	}
+
+	prefix := strings.TrimRight(remotePath, "/") + "/"
+	var files []string
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		rel := strings.TrimPrefix(line, prefix)
+		if rel != "" && rel != line {
+			files = append(files, rel)
+		}
+	}
+	return files, nil
+}
+
+// rsyncToPod performs a true rsync-like sync: it uploads all local files to the pod
+// and removes any remote files that are no longer present locally.
+func rsyncToPod(ctx context.Context, podName, ns, container, localPath, remotePath string, excludes []string) error {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return fmt.Errorf("local path %q not found: %w", localPath, err)
+	}
+
+	type fileEntry struct {
+		localFull   string
+		archiveName string
+	}
+
+	localFileSet := map[string]struct{}{}
+	var entries []fileEntry
+
+	if info.IsDir() {
+		err = filepath.Walk(localPath, func(path string, fi os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			rel, _ := filepath.Rel(localPath, path)
+			if shouldExclude(rel, excludes) {
+				if fi.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !fi.IsDir() {
+				localFileSet[filepath.ToSlash(rel)] = struct{}{}
+				entries = append(entries, fileEntry{localFull: path, archiveName: rel})
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to walk local directory %q: %w", localPath, err)
+		}
+
+		// Remove remote files that are absent locally.
+		remoteFiles, listErr := listRemoteFiles(ctx, podName, ns, container, remotePath)
+		if listErr == nil && len(remoteFiles) > 0 {
+			var toDelete []string
+			for _, rf := range remoteFiles {
+				if _, ok := localFileSet[filepath.ToSlash(rf)]; !ok {
+					toDelete = append(toDelete, remotePath+"/"+rf)
+				}
+			}
+			if len(toDelete) > 0 {
+				quoted := make([]string, len(toDelete))
+				for i, p := range toDelete {
+					quoted[i] = shellQuote(p)
+				}
+				rmCmd := "rm -rf " + strings.Join(quoted, " ")
+				if rmErr := runRemoteCommand(ctx, podName, ns, container, []string{"sh", "-c", rmCmd}); rmErr != nil {
+					fmt.Printf("⚠️  Failed to remove stale remote files: %v\n", rmErr)
+				}
+				// Prune any now-empty directories.
+				pruneCmd := fmt.Sprintf("find %s -mindepth 1 -type d -empty -delete 2>/dev/null; true", shellQuote(remotePath))
+				_ = runRemoteCommand(ctx, podName, ns, container, []string{"sh", "-c", pruneCmd})
+			}
+		}
+	} else {
+		entries = append(entries, fileEntry{
+			localFull:   localPath,
+			archiveName: filepath.Base(localPath),
+		})
+	}
+
+	// Ensure remote directory exists.
+	mkdirCmd := fmt.Sprintf("mkdir -p %s", shellQuote(remotePath))
+	if err := runRemoteCommand(ctx, podName, ns, container, []string{"sh", "-c", mkdirCmd}); err != nil {
+		return fmt.Errorf("failed to create remote directory %q: %w", remotePath, err)
+	}
+
+	if len(entries) == 0 {
+		fmt.Printf("Rsync complete: remote directory is up to date\n")
+		return nil
+	}
+
+	fmt.Printf("Syncing %d file(s) to %s:%s ...\n", len(entries), podName, remotePath)
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, e := range entries {
+		if err := addFileToTar(tw, e.localFull, e.archiveName); err != nil {
+			return fmt.Errorf("failed to add %q to archive: %w", e.localFull, err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("failed to finalize tar archive: %w", err)
+	}
+	if err := streamTarToPod(ctx, podName, ns, container, remotePath, &buf); err != nil {
+		return fmt.Errorf("failed to stream files to pod: %w", err)
+	}
+
+	fmt.Printf("Rsync complete: %d/%d files synced\n", len(entries), len(entries))
+	return nil
+}
+
 // shouldExclude returns true if the relative path matches any of the exclusion patterns.
 func shouldExclude(rel string, excludes []string) bool {
 	for _, pattern := range excludes {
@@ -277,7 +428,9 @@ func runRemoteCommand(ctx context.Context, podName, ns, container string, comman
 
 // watchAndSync watches localPath for filesystem changes and syncs to the pod on each change.
 // It recursively watches all subdirectories, applies debouncing, and handles editor-style
-// atomic writes (Rename + Create events) in addition to Write events.
+// atomic writes (Rename + Create events), file modifications (Write), and deletions (Remove).
+// Every debounced trigger runs a full rsync: uploading new/changed files and removing remote
+// files that no longer exist locally.
 func watchAndSync(ctx context.Context, podName, ns, container, localPath, remotePath string, excludes []string) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -296,8 +449,12 @@ func watchAndSync(ctx context.Context, podName, ns, container, localPath, remote
 
 	fmt.Printf("👀 Watching %s for changes... (press Ctrl+C to stop)\n", localPath)
 
-	// Debounce: accumulate rapid successive events and fire a single sync after a quiet period.
-	var debounceTimer *time.Timer
+	// Debounce: accumulate rapid successive events and fire a single rsync after a quiet period.
+	// A mutex ensures that only one rsyncToPod runs at a time, even if Stop() races.
+	var (
+		debounceTimer *time.Timer
+		syncMu        sync.Mutex
+	)
 	const debounceDelay = 200 * time.Millisecond
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -308,9 +465,11 @@ func watchAndSync(ctx context.Context, podName, ns, container, localPath, remote
 			debounceTimer.Stop()
 		}
 		debounceTimer = time.AfterFunc(debounceDelay, func() {
+			syncMu.Lock()
+			defer syncMu.Unlock()
 			ts := time.Now().Format("15:04:05")
 			fmt.Printf("[%s] Changed: %s → syncing...\n", ts, changedFile)
-			if syncErr := syncToPod(ctx, podName, ns, container, localPath, remotePath, false, excludes); syncErr != nil {
+			if syncErr := rsyncToPod(ctx, podName, ns, container, localPath, remotePath, excludes); syncErr != nil {
 				fmt.Printf("[%s] ❌ Sync failed: %v\n", ts, syncErr)
 			} else {
 				fmt.Printf("[%s] ✅ Synced to %s:%s\n", ts, podName, remotePath)
@@ -324,22 +483,30 @@ func watchAndSync(ctx context.Context, podName, ns, container, localPath, remote
 			if !ok {
 				return nil
 			}
-			// Handle Write, Create, and Rename events (covers editor atomic-write patterns).
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
-				// When a new directory appears, add it (and its children) to the watcher.
-				if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
-					_ = addWatchRecursive(watcher, event.Name, excludes)
-					continue
-				}
-				rel, relErr := filepath.Rel(absPath, event.Name)
-				if relErr != nil {
-					continue
-				}
-				if shouldExclude(rel, excludes) {
-					continue
-				}
-				triggerSync(rel)
+			// Handle all event types:
+			//   Write/Create – file content added or modified
+			//   Rename       – covers editor atomic-write (old path renamed away)
+			//   Remove       – file or directory deleted locally
+			if !event.Has(fsnotify.Write) && !event.Has(fsnotify.Create) &&
+				!event.Has(fsnotify.Rename) && !event.Has(fsnotify.Remove) {
+				continue
 			}
+
+			rel, relErr := filepath.Rel(absPath, event.Name)
+			if relErr != nil {
+				continue
+			}
+			if shouldExclude(rel, excludes) {
+				continue
+			}
+
+			// When a new directory appears, register it with the watcher so future
+			// changes inside it are also detected.
+			if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
+				_ = addWatchRecursive(watcher, event.Name, excludes)
+			}
+
+			triggerSync(rel)
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
 				return nil
