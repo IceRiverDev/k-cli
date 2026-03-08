@@ -9,10 +9,10 @@
 | Command | Description |
 |---------|-------------|
 | `k-cli exec` | Open an interactive TTY shell in a running Pod |
-| `k-cli describe` | Show detailed Pod specification and status |
-| `k-cli sync` | Sync local files/directories to a Pod (supports `--watch` hot-reload) |
+| `k-cli sync` | Sync local files/directories to a Pod (supports `--watch` hot-reload, recursive monitoring) |
 | `k-cli pull` | Pull files/directories from a Pod to local |
 | `k-cli diagnose` | Diagnose Pod health and give actionable suggestions |
+| `k-cli secret` | View a Kubernetes Secret with automatically decoded base64 values |
 
 > **Note:** For creating and deleting Pods, use the native `kubectl create` and `kubectl delete` commands.
 
@@ -48,10 +48,7 @@ k-cli --help
 ## Quick Start
 
 ```bash
-# Describe a pod
-k-cli describe my-pod
-
-# Exec into it
+# Exec into a pod
 k-cli exec my-pod -c my-pod
 
 # Sync a local config file
@@ -60,11 +57,14 @@ k-cli sync my-pod ./nginx.conf /etc/nginx/nginx.conf
 # Pull a file from the pod
 k-cli pull my-pod /app/config.yaml ./config.yaml
 
-# Watch for local changes and auto-sync
+# Watch for local changes and auto-sync (recursive, debounced)
 k-cli sync my-pod ./src /app/src --watch
 
 # Diagnose pod health
 k-cli diagnose my-pod
+
+# View a secret with decoded values
+k-cli secret my-secret -n default
 ```
 
 ---
@@ -95,33 +95,9 @@ k-cli exec my-pod -n default -c main
 
 ---
 
-### `k-cli describe <pod-name>` — Show Pod Details
-
-Displays full Pod specification including containers, labels, annotations, and recent events.
-
-```bash
-k-cli describe <pod-name> [flags]
-
-Flags:
-  -o, --output string      Output format: yaml
-  -n, --namespace string   Namespace (default "default")
-```
-
-**Examples:**
-
-```bash
-# Human-readable output
-k-cli describe my-pod -n default
-
-# Raw YAML output
-k-cli describe my-pod -n default -o yaml
-```
-
----
-
 ### `k-cli sync <pod-name> <local-path> <remote-path>` — Sync Files to Pod
 
-Copies a local file or directory into a Pod using the `exec + tar` streaming mechanism (same as `kubectl cp`). Supports `--watch` for continuous hot-reload.
+Copies a local file or directory into a Pod using the `exec + tar` streaming mechanism (same as `kubectl cp`). Supports `--watch` for continuous hot-reload with recursive directory monitoring, debouncing, and compatibility with editor atomic-write patterns (vim, GoLand, etc.).
 
 ```bash
 k-cli sync <pod-name> <local-path> <remote-path> [flags]
@@ -146,7 +122,7 @@ k-cli sync my-pod ./config.yaml /app/config.yaml
 # Sync with deletion of stale remote files
 k-cli sync my-pod ./dist /app/dist --delete --exclude .git --exclude node_modules
 
-# Watch for changes and auto-sync (hot-reload)
+# Watch for changes and auto-sync (hot-reload, recursive, editor-compatible)
 k-cli sync my-pod ./src /app/src --watch
 ```
 
@@ -172,6 +148,34 @@ k-cli pull my-pod /app/logs ./local-logs -n default
 
 # Pull a single file
 k-cli pull my-pod /app/config.yaml ./config.yaml -n default -c main
+```
+
+---
+
+### `k-cli secret <secret-name>` — View Decoded Secret
+
+Fetches a Kubernetes Secret and automatically decodes all base64-encoded values for easy inspection.
+
+```bash
+k-cli secret <secret-name> [flags]
+
+Flags:
+      --key string         Show only this specific key
+  -n, --namespace string   Namespace (default "default")
+      --show-encoded       Also show the original base64 encoded value
+```
+
+**Examples:**
+
+```bash
+# Show all keys in a secret (decoded)
+k-cli secret my-secret -n default
+
+# Show only a specific key
+k-cli secret my-secret --key DB_PASSWORD
+
+# Show both decoded and encoded values
+k-cli secret my-secret --show-encoded
 ```
 
 ---
@@ -249,11 +253,11 @@ These flags are available on every command:
 
 ```bash
 # Use a specific kubeconfig
-k-cli describe my-pod --kubeconfig /path/to/kubeconfig
+k-cli exec my-pod --kubeconfig /path/to/kubeconfig
 
 # Use the KUBECONFIG environment variable
 export KUBECONFIG=/path/to/kubeconfig
-k-cli describe my-pod
+k-cli exec my-pod
 ```
 
 ---
@@ -266,10 +270,10 @@ k-cli/
 ├── cmd/
 │   ├── root.go       # Root command and global flags
 │   ├── exec.go       # k-cli exec
-│   ├── describe.go   # k-cli describe
-│   ├── sync.go       # k-cli sync (--watch hot-reload)
+│   ├── sync.go       # k-cli sync (--watch hot-reload, recursive)
 │   ├── pull.go       # k-cli pull
-│   └── diagnose.go   # k-cli diagnose
+│   ├── diagnose.go   # k-cli diagnose
+│   └── secret.go     # k-cli secret
 ├── internal/
 │   └── k8s/
 │       └── client.go # Kubernetes client wrapper

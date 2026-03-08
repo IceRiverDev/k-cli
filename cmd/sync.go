@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -275,6 +276,8 @@ func runRemoteCommand(ctx context.Context, podName, ns, container string, comman
 }
 
 // watchAndSync watches localPath for filesystem changes and syncs to the pod on each change.
+// It recursively watches all subdirectories, applies debouncing, and handles editor-style
+// atomic writes (Rename + Create events) in addition to Write events.
 func watchAndSync(ctx context.Context, podName, ns, container, localPath, remotePath string, excludes []string) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -282,65 +285,84 @@ func watchAndSync(ctx context.Context, podName, ns, container, localPath, remote
 	}
 	defer watcher.Close()
 
-	// Recursively add all directories under localPath.
-	if err := addDirsToWatcher(watcher, localPath); err != nil {
+	// Resolve absolute path for reliable relative-path computation.
+	absPath, err := filepath.Abs(localPath)
+	if err != nil {
+		return err
+	}
+	if err := addWatchRecursive(watcher, absPath, excludes); err != nil {
 		return fmt.Errorf("failed to watch %q: %w", localPath, err)
 	}
 
 	fmt.Printf("👀 Watching %s for changes... (press Ctrl+C to stop)\n", localPath)
 
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
-	defer stop()
+	// Debounce: accumulate rapid successive events and fire a single sync after a quiet period.
+	var debounceTimer *time.Timer
+	const debounceDelay = 200 * time.Millisecond
+
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	triggerSync := func(changedFile string) {
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+		debounceTimer = time.AfterFunc(debounceDelay, func() {
+			ts := time.Now().Format("15:04:05")
+			fmt.Printf("[%s] Changed: %s → syncing...\n", ts, changedFile)
+			if syncErr := syncToPod(ctx, podName, ns, container, localPath, remotePath, false, excludes); syncErr != nil {
+				fmt.Printf("[%s] ❌ Sync failed: %v\n", ts, syncErr)
+			} else {
+				fmt.Printf("[%s] ✅ Synced to %s:%s\n", ts, podName, remotePath)
+			}
+		})
+	}
 
 	for {
 		select {
-		case <-ctx.Done():
-			fmt.Println("\nStopping watcher.")
-			return nil
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return nil
 			}
-			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) {
-				rel, relErr := filepath.Rel(localPath, event.Name)
+			// Handle Write, Create, and Rename events (covers editor atomic-write patterns).
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
+				// When a new directory appears, add it (and its children) to the watcher.
+				if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
+					_ = addWatchRecursive(watcher, event.Name, excludes)
+					continue
+				}
+				rel, relErr := filepath.Rel(absPath, event.Name)
 				if relErr != nil {
 					continue
 				}
 				if shouldExclude(rel, excludes) {
 					continue
 				}
-				ts := time.Now().Format("15:04:05")
-				fmt.Printf("[%s] Changed: %s → syncing...\n", ts, event.Name)
-
-				// For newly created directories, add them to the watcher.
-				if event.Has(fsnotify.Create) {
-					if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
-						_ = watcher.Add(event.Name)
-					}
-				}
-
-				if syncErr := syncToPod(ctx, podName, ns, container, localPath, remotePath, false, excludes); syncErr != nil {
-					fmt.Printf("[%s] ❌ Sync error: %v\n", ts, syncErr)
-				} else {
-					fmt.Printf("[%s] ✅ Synced to %s:%s\n", ts, podName, remotePath)
-				}
+				triggerSync(rel)
 			}
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {
 				return nil
 			}
-			fmt.Printf("watcher error: %v\n", watchErr)
+			fmt.Printf("⚠️  Watcher error: %v\n", watchErr)
+		case <-ctx.Done():
+			fmt.Println("\n👋 Watch stopped.")
+			return nil
 		}
 	}
 }
 
-// addDirsToWatcher recursively adds all directories under root to the watcher.
-func addDirsToWatcher(watcher *fsnotify.Watcher, root string) error {
+// addWatchRecursive recursively adds root and all non-excluded subdirectories to the watcher.
+func addWatchRecursive(watcher *fsnotify.Watcher, root string, excludes []string) error {
 	return filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return nil // skip directories we cannot access
 		}
 		if fi.IsDir() {
+			rel, _ := filepath.Rel(root, path)
+			if shouldExclude(rel, excludes) {
+				return filepath.SkipDir
+			}
 			return watcher.Add(path)
 		}
 		return nil
