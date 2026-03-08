@@ -23,14 +23,14 @@
 ### Using `go install`
 
 ```bash
-go install github.com/IceRiverDev/simple-cli@latest
+go install github.com/IceRiverDev/k-cli@latest
 ```
 
 ### Build from source (with version injection)
 
 ```bash
-git clone https://github.com/IceRiverDev/simple-cli.git
-cd simple-cli
+git clone https://github.com/IceRiverDev/k-cli.git
+cd k-cli
 
 VERSION=$(git describe --tags --always --dirty)
 go build -ldflags "-X main.version=${VERSION}" -o k-cli .
