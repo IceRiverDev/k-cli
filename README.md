@@ -12,6 +12,7 @@
 | `k-cli pull` | Pull files/directories from a Pod to local via tar streaming |
 | `k-cli diagnose` | Diagnose Pod health and give actionable suggestions |
 | `k-cli secret` | View a Kubernetes Secret with automatically decoded values |
+| `k-cli completion` | Generate shell completion scripts (bash / zsh / fish / powershell) |
 
 > **Note:** For creating and deleting Pods, use the native `kubectl create` and `kubectl delete` commands.
 
@@ -38,6 +39,48 @@ Move the binary to somewhere on your `$PATH`:
 ```bash
 mv k-cli /usr/local/bin/
 k-cli --help
+```
+
+### Shell Completion
+
+After installing the binary, set up tab-completion for your shell:
+
+**Bash**
+```bash
+# Load for the current session
+source <(k-cli completion bash)
+
+# Persist (Linux)
+k-cli completion bash > /etc/bash_completion.d/k-cli
+
+# Persist (macOS with Homebrew bash-completion@2)
+k-cli completion bash > $(brew --prefix)/etc/bash_completion.d/k-cli
+```
+
+**Zsh**
+```zsh
+# Load for the current session
+source <(k-cli completion zsh)
+
+# Persist (add to ~/.zshrc)
+echo 'source <(k-cli completion zsh)' >> ~/.zshrc
+
+# With oh-my-zsh
+k-cli completion zsh > ~/.oh-my-zsh/completions/_k-cli
+```
+
+**Fish**
+```fish
+k-cli completion fish > ~/.config/fish/completions/k-cli.fish
+```
+
+**PowerShell**
+```powershell
+# Load for the current session
+k-cli completion powershell | Out-String | Invoke-Expression
+
+# Persist (add to your PowerShell profile)
+k-cli completion powershell >> $PROFILE
 ```
 
 ---
@@ -223,8 +266,7 @@ These flags are available on every command:
 |------|-------------|
 | `--kubeconfig string` | Path to kubeconfig file (default: `~/.kube/config` or `$KUBECONFIG`) |
 | `-n, --namespace string` | Default namespace (default: `default`) |
-| `--log` | Enable log output (disabled by default) |
-| `-v, --verbose` | Enable verbose/debug logging (effective when `--log` is enabled) |
+| `--log` | Enable debug-level log output (disabled by default) |
 
 ---
 
@@ -253,14 +295,15 @@ k-cli sync my-pod ./src /app/src
 k-cli/
 ├── main.go
 ├── cmd/
-│   ├── root.go       # Root command and global flags
-│   ├── sync.go       # k-cli sync (--watch recursive + debounced rsync)
-│   ├── pull.go       # k-cli pull
-│   ├── diagnose.go   # k-cli diagnose
-│   └── secret.go     # k-cli secret
+│   ├── root.go        # Root command and global flags
+│   ├── completion.go  # k-cli completion
+│   ├── sync.go        # k-cli sync (--watch recursive + debounced rsync)
+│   ├── pull.go        # k-cli pull
+│   ├── diagnose.go    # k-cli diagnose
+│   └── secret.go      # k-cli secret
 ├── internal/
 │   └── k8s/
-│       └── client.go # Kubernetes client wrapper
+│       └── client.go  # Kubernetes client wrapper
 ├── go.mod
 └── README.md
 ```

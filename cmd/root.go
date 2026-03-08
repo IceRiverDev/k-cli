@@ -15,7 +15,6 @@ import (
 var (
 	kubeconfig string
 	namespace  string
-	verbose    bool
 	enableLog  bool
 
 	// Logger is the global structured logger.
@@ -30,13 +29,12 @@ var rootCmd = &cobra.Command{
 	Use:   "k-cli",
 	Short: "A kubectl-like CLI tool for managing Kubernetes Pods",
 	Long: `k-cli is a production-grade CLI tool built with Cobra that lets you
-manage Kubernetes Pods — create, delete, describe, exec into, and sync files.
+manage Kubernetes Pods — sync files, pull remote paths, diagnose health, and inspect secrets.
 
-By default, log output is disabled (silent mode). Use --log to enable logging.
-Combine --log with --verbose to enable debug-level logging.`,
+By default, log output is disabled (silent mode). Use --log to enable debug-level logging.`,
 	SilenceUsage: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		initLogger(enableLog, verbose)
+		initLogger(enableLog)
 
 		client, err := k8sclient.NewClient(kubeconfig)
 		if err != nil {
@@ -44,12 +42,10 @@ Combine --log with --verbose to enable debug-level logging.`,
 		}
 		K8sClient = client
 
-		if verbose {
-			Logger.Info("Kubernetes client initialized",
-				zap.String("kubeconfig", kubeconfig),
-				zap.String("namespace", namespace),
-			)
-		}
+		Logger.Info("Kubernetes client initialized",
+			zap.String("kubeconfig", kubeconfig),
+			zap.String("namespace", namespace),
+		)
 		return nil
 	},
 }
@@ -67,12 +63,13 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "path to the kubeconfig file (default: ~/.kube/config, or $KUBECONFIG)")
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "default", "default Kubernetes namespace")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose logging")
-	rootCmd.PersistentFlags().BoolVar(&enableLog, "log", false, "enable log output (disabled by default)")
+	rootCmd.PersistentFlags().BoolVar(&enableLog, "log", false, "enable debug-level log output")
 
 	_ = viper.BindPFlag("kubeconfig", rootCmd.PersistentFlags().Lookup("kubeconfig"))
 	_ = viper.BindPFlag("namespace", rootCmd.PersistentFlags().Lookup("namespace"))
-	_ = viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+
+	// Disable Cobra's built-in completion command; replaced by cmd/completion.go.
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 }
 
 // initConfig reads in config file and ENV variables.
@@ -88,24 +85,20 @@ func initConfig() {
 }
 
 // initLogger configures the global zap logger.
-func initLogger(enableLog bool, verbose bool) {
+// When enableLog is true, debug-level structured logging is written to stderr.
+func initLogger(enableLog bool) {
 	if !enableLog {
 		Logger = zap.NewNop()
 		return
 	}
-	level := zapcore.InfoLevel
-	if verbose {
-		level = zapcore.DebugLevel
-	}
 
 	cfg := zap.NewProductionConfig()
-	cfg.Level = zap.NewAtomicLevelAt(level)
+	cfg.Level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
 	var err error
 	Logger, err = cfg.Build()
 	if err != nil {
-		// Fall back to a no-op logger if build fails.
 		Logger = zap.NewNop()
 	}
 }

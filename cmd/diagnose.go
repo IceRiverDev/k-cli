@@ -49,7 +49,7 @@ func diagnosePod(ctx context.Context, podName, ns string) error {
 		FieldSelector: fieldSelector,
 		Limit:         10,
 	})
-	if err != nil && verbose {
+	if err != nil {
 		Logger.Warn("Could not fetch events", zap.Error(err))
 	}
 
