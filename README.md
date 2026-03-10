@@ -1,6 +1,6 @@
 # k-cli
 
-`k-cli` is a production-grade, kubectl-like CLI tool for managing Kubernetes Pods. Built with Go and [Cobra](https://github.com/spf13/cobra), it provides a clean interface for common Pod operations.
+`k-cli` is a production-grade, kubectl-like CLI tool for managing Kubernetes Pods which kubectl can not do. Built with Go and [Cobra](https://github.com/spf13/cobra), it provides a clean interface for specific Pod operations.
 
 ---
 
